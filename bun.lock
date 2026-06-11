@@ -185,7 +185,7 @@
       "name": "@mimo-ai/cli",
       "version": "0.1.0",
       "bin": {
-        "mimo": "./bin/mimo",
+        "mimo+": "./bin/mimo+",
       },
       "dependencies": {
         "@actions/core": "1.11.1",
