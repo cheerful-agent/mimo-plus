@@ -1,0 +1,25 @@
+执行工作流脚本，以确定性方式编排多个子代理。脚本是在沙箱中运行的纯 JavaScript，通过 agent()、parallel() 和 pipeline() 分发子代理。此工具立即返回一个 run_id 并在后台运行；工作流完成时结果将以通知形式送达。
+
+操作 "run"：启动工作流。提供 `name`（内置工作流，见下面的目录）或 `script`（内联 JS；必须以 `export const meta = { name, description }` 开头）。立即返回一个 run_id。可选择提供 `workspace`（脚本的文件原语被限定在该目录内；默认为工作树）。
+操作 "status"：通过 run_id 检查运行状态。
+操作 "wait"：阻塞直到运行完成（或超时），返回其结果。
+操作 "cancel"：通过 run_id 取消正在运行的工作流（尽力而为；正在执行的子代理会在下一个安全点停止，而非立即停止）。
+操作 "resume"：使用相同的 run_id 重新启动持久化的工作流（重新执行其脚本；收敛性脚本第二次运行时工作量会更少）。
+
+在脚本中你可以调用：
+- agent(prompt, opts?) -> Promise：生成一个子代理；解析为其结果（如果给出了 opts.schema 则为验证后的对象，否则为其最终文本），失败时返回 null。从不抛出异常。
+- parallel(thunks) -> Promise<any[]>：并发执行 thunks；抛出异常的 thunk 解析为 null。
+- pipeline(items, ...stages) -> Promise<any[]>：将每个 item 依次通过所有阶段；阶段之间无屏障。
+- workflow(nameOrScript, args?, opts?) -> Promise：作为自己的子运行执行一个子工作流并等待其结果。nameOrScript 可以是内联脚本（以 `export const meta` 开头）或已保存的工作流名称（从 .mimocode/workflows/ 或 .claude/workflows/ 解析）。args 作为 `args` 传递给子工作流。opts：{ workspace?, maxConcurrentAgents? }。失败的子工作流解析为 null（从不抛出异常）；未知名称或循环/超深度则抛出异常（导致运行失败）。子工作流共享进程级并发上限，并默认继承父工作空间。
+- readFile(path) -> Promise<string|null>：读取工作空间中的文件（不存在时返回 null）。
+- writeFile(path, content) -> Promise：在工作空间中写入文件（父目录自动创建）。
+- glob(pattern) -> Promise<string[]>：列出匹配 glob 模式的工作空间路径，已排序，包括文件和目录。使用此方法来列举工作单元——不要生成代理来列出文件。
+- exists(path) -> Promise<boolean>：检查工作空间路径是否存在。
+- phase(title), log(message)：进度报告。
+- args：启动工作流时传递的 JSON 值。
+
+并发数由宿主限制（默认为 min(16, 2x 核心数)）；超额的 agent() 调用会自动排队。
+
+工作流之间通过数据流进行通信：从子工作流返回值并将其作为参数传递给下一个（或通过 writeFile 写入共享文件，然后在后续阶段通过 readFile 读取）。工作流不会直接相互发送消息。文件原语通过词法名称检查被限定在工作空间根目录内（默认为项目工作树，或你传递给 run 操作的 `workspace`）——它会阻止 `..` 和绝对路径逃逸，但不解析符号链接，因此将其视为作用域限制而非严格的安全边界。
+
+workflow() 的循环检测是不对称的：已保存的名称通过名称检查（因此 A 调用 A 无论参数如何都是循环），而内联脚本通过内容+参数检查（因此用不同参数调用自身的内联体不会被标记为循环，仅受 maxDepth 限制）。循环、超 maxDepth 或未知名称会在 workflow() 调用点抛出异常，如果未捕获则会导致运行失败——但在访客脚本中将 workflow() 包裹在 try/catch 中会静默这些异常，因此除非你打算忽略配置错误，否则不要将 workflow() 包裹在 try/catch 中。

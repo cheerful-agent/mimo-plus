@@ -1,0 +1,48 @@
+持久化工作项工具。任务是有限范围、可引用的实体，带有 ID（T1、T2、...；子任务 T1.1、T1.2、...）。这是唯一的工作项工具——用它来跟踪每个多步骤的工作：你正在做什么、已排队什么、被阻塞什么、已完成什么。
+
+JSON 调用总是将动作包裹在 `operation` 对象中——请参见下面的示例。
+
+## 操作
+
+- create：注册一个新任务。`summary` 为必填项。可选：`parent_id`。
+- list：列举任务。默认显示 open + in_progress + blocked，排除已归档的。
+              可选：`status` 过滤、`include_terminal`、`include_archived`。
+- get：按 id 获取一个任务。
+- start：将任务标记为 in_progress（你正在处理）。`id` 为必填项。
+- block：转换 → blocked。`id` 为必填项。可选：`event_summary`。
+- unblock：转换 blocked → open。`id` 为必填项。可选：`event_summary`。
+- done：标记任务完成。`id` 为必填项。可选：`event_summary`。
+- abandon：放弃任务而不完成。`id` 为必填项。可选：`event_summary`。
+- rename：更改任务的摘要。`id` + `summary` 为必填项。
+
+状态生命周期：open ⇄ in_progress，任一 → blocked → open，任一 → done | abandoned。
+在处理任务前先标记为 `start`；完成后立即标记为 `done`。
+终端状态在 `checkpoint.task_archive_days` 后自动清理（默认 7 天）。
+
+## JSON 示例
+
+{"operation":{"action":"create","summary":"Implement auth"}}
+{"operation":{"action":"create","summary":"Lexer","parent_id":"T1"}}
+{"operation":{"action":"list"}}
+{"operation":{"action":"get","id":"T1"}}
+{"operation":{"action":"start","id":"T1"}}
+{"operation":{"action":"block","id":"T1","event_summary":"waiting on spec"}}
+{"operation":{"action":"unblock","id":"T1","event_summary":"spec resolved"}}
+{"operation":{"action":"done","id":"T1","event_summary":"all tests pass"}}
+{"operation":{"action":"abandon","id":"T1","event_summary":"out of scope"}}
+{"operation":{"action":"rename","id":"T1","summary":"Updated title"}}
+
+## 纪律
+
+- 只有在工作完全完成时才标记 `done`。如果测试失败、实现不完整或遇到未解决的错误，保持 in_progress 或 `block` 状态——绝不标记 `done`。
+- 如果被阻塞，将任务 `block` 或创建一个描述阻塞项的新任务。
+- 单独工作时一次只保持一个任务处于 in_progress 状态（不强制——并行子代理可以各自有自己的 in_progress 任务）。
+
+## 何时使用
+
+当工作有 3 个以上步骤、跨越多个轮次、将被再次引用（由你、用户或子代理引用）或需要在会话中可见时，使用 task。
+对于单个简单的操作则跳过。
+
+## 不要在回复中重复
+
+不要在回复中列出任务树——UI 已经渲染了它。只需总结你正在处理的任务或自上次调用以来发生了什么变化。

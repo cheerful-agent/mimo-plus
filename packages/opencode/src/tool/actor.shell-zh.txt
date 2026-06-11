@@ -1,0 +1,71 @@
+启动一个子代理来自主处理复杂的多步骤任务。
+
+可用的子代理类型在下方列出（注册表在每个代理的请求时追加）。
+
+# 脚本结构
+#   - 多行：每个非空行为一条命令，首次失败时 set-e 退出
+#   - "双引号"保留字面换行符，处理 \" \\ 转义
+#   - '单引号'为原样
+#   - <<EOF heredoc 正文完全原样（无转义，无 $vars）
+#   - # 开始行注释到行尾（引号内的 # 为字面文本）
+#   - $vars 作为字面文本保留（不展开）
+
+# 阻塞直到完成，内联返回子代理的最终消息：
+    actor run <subagent_type> "<description>" "<prompt>" [--model <ref>] [--actor <id>] [--timeout <ms>] [--command <cmd>] [--context none|state|full] [--output-schema '<json>']
+    # 将其绑定到你的某个 `task` 工具任务（来自 `task` 工具的 TID，例如 T4）：
+    actor run <subagent_type> "<description>" "<prompt>" --task <TID>
+
+# 立即返回 actor_id，独立运行：
+    actor spawn <subagent_type> "<description>" "<prompt>" [--model <ref>] [--actor <id>] [--command <cmd>] [--context none|state|full] [--output-schema '<json>']
+    # 将其绑定到你的某个 `task` 工具任务（来自 `task` 工具的 TID，例如 T4）：
+    actor spawn <subagent_type> "<description>" "<prompt>" --task <TID>
+
+# 阻塞等待先前生成的 actor 的结果：
+    actor wait <actor_id> [--timeout <ms>]
+
+# 检查/控制：
+    actor status <actor_id>     # 查看当前状态，不阻塞
+    actor cancel <actor_id>     # 优雅停止
+
+# 向另一 actor 的收件箱发送消息（即发即弃）：
+    actor send <to_actor_id> "<content>" [--session <id>] [--type <t>]
+    # to_actor_id：'main' 表示会话的主代理，或子代理 ID 如 'explore-1'
+    # --session：目标会话 ID（默认为当前）；--type：'text'（默认）或 'actor_notification'
+    # （--task 在此处无效——它仅适用于 run/spawn，用于将子代理绑定到 task_id）
+
+示例：
+    actor run explore "Find error recovery" "Scan src/parser.ts for catch blocks. Return file:line."
+
+# 为此子代理选择模型/层级（组名如 ultra/standard/lite，或字面 provider/model）：
+    actor run explore "Quick scan" "find catch blocks" --model lite
+
+# 将此子代理绑定到任务——传递 `task` 工具在本会话中返回的 TID
+# （例如 T1）。完成时 postStop 钩子验证 tasks/<TID>/progress.md。
+# 未知或格式错误的 TID 将被忽略，子代理以临时模式运行：
+    actor spawn general "Implement auth" "build the login flow" --task T1
+
+# 任何多行提示词——heredoc 正文为原样（无需对 " \ $ # 进行转义）：
+    actor run general "Type checker review" <<EOF
+    Read docs/spec.md §3 then src/types.ts.
+    Report missing implementations + coverage gaps.
+    Regex check: /\bnew \w+Provider\b/  (paths like C:\Users\... are fine)
+    Format: { missing_implementation: [...], coverage_gaps: [...] }.
+    EOF
+
+# 并行调查：生成三个，然后可选地等待或让通知送达：
+    actor spawn explore "Q1" "search for catch blocks"
+    actor spawn explore "Q2" "search for type narrowing"
+    actor spawn explore "Q3" "search for test fixtures"
+
+# 当你不需要内联结果时即发即弃：
+    actor spawn general "Background log collection" "..."
+
+# run/spawn 标志：--actor 恢复先前的子代理（通过 actor_id）；--timeout 超时 ms 后放弃
+#   （仅 run）；--command 触发此操作的命令；--context none|state|full
+#   （默认 none）；--output-schema JSON Schema 字符串（用单引号括起来）——强制
+#   子代理返回匹配的对象而非自由文本。
+
+何时使用什么：
+    run    — 单一的委托，其结果驱动你的下一步
+    spawn  — 扇出以并行工作，或即发即弃的后台任务
+    wait   — 按需获取先前生成的 actor 的结果

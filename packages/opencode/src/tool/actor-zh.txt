@@ -1,0 +1,95 @@
+启动一个新 actor（子代理）来自主处理复杂的多步骤任务。
+
+JSON 调用将动作负载包裹在 `operation` 对象内；`action` 是判别字段。
+
+示例：
+{"operation":{"action":"run","subagent_type":"explore","description":"Find error recovery","prompt":"<full task>"}}
+{"operation":{"action":"run","subagent_type":"explore","description":"Investigate T4","prompt":"<full task>","task_id":"T4"}}
+{"operation":{"action":"spawn","subagent_type":"general","description":"Long-running search","prompt":"<full task>"}}
+{"operation":{"action":"status","actor_id":"<existing>"}}
+{"operation":{"action":"wait","actor_id":"<existing>"}}
+{"operation":{"action":"cancel","actor_id":"<existing>"}}
+{"operation":{"action":"send","to_actor_id":"<existing>","content":"<message>"}}
+
+## 操作（`operation.action` 字段选择其一）
+
+- run：生成一个子代理并阻塞直至完成；结果内联返回。
+          必填：subagent_type、description、prompt
+          可选：actor_id、timeout_ms、command、context
+- spawn：生成一个子代理并立即返回 actor_id（后台运行）。
+          必填：subagent_type、description、prompt
+          可选：actor_id、command、context
+- status：轮询 actor 状态，不阻塞。必填：actor_id。
+          返回：{ status: "pending"|"running"|"idle"|"unknown", actor_id, turnCount, ... }
+- wait：阻塞直至 actor 完成（成功/失败/取消）或超时（默认 10 分钟）。
+          必填：actor_id。可选：timeout_ms。
+          返回：{ status, actor_id, result?, error? }
+- cancel：停止正在运行的 actor（优雅停止）。必填：actor_id。幂等。
+- send：向另一 actor 的收件箱发送消息。
+          必填：to_actor_id、content。
+          可选：to_session_id、type（默认 "text"）。
+          接收方在下次迭代时看到包裹在 <inbox from="..." sent_at="...">...</inbox> 中的消息。
+
+## 何时使用 actor
+
+- **并行化**：同时生成多个独立的搜索/分析；对每个执行 `wait`。
+- **隔离重活**：将 10 次以上文件读取委托给子代理；你只获得综合结果。
+- **专项搜索**：使用 `explore` 进行只读代码发现（查找定义、调用方）。
+- **自定义审查**：`general` 子代理根据规范验证实现，不带偏见。
+- **处理已跟踪的任务**：当生成子代理为你的某个活动任务（T1、T2、...）工作——调查、专项审查、专用实现——传递 `task_id`，以便子代理的逐字结果被捕获到 `tasks/<TID>/progress.md` 并在下一个检查点中整合。只传递 `task` 工具在本会话中返回的任务 ID；绝不自行编造。如果你尚未创建任务，先使用 `task` 工具创建它，或者省略 `task_id` 进行临时工作。
+- **不要为以下情况生成子代理**：单文件简单查找、答案已在你的上下文中、或对部分输出的决策。
+
+## 编写提示词
+
+你是子代理的唯一简报——它没有看到本次对话。
+- 解释你正在尝试完成什么以及为什么。
+- 说明你已经了解或排除的内容。
+- 提供足够的上下文以便做出判断决策，而不仅仅是狭窄的步骤。
+- 如果你需要简短输出，请说明（"用不超过 200 字报告"）。
+- 对于调查：移交问题；预设的步骤会成为累赘。
+
+## 上下文继承
+
+- `context="full"`：子代理查看你的完整对话历史（适用于状态写入器、评估器）。
+- `context="state"`：子代理获得注入的检查点摘要（背景知识，无完整细节）。
+- `context="none"`（默认）：干净上下文，仅有提示词。
+
+## Actor ID 与 Task ID
+
+`actor_id` 标识一个子代理会话（可在多个轮次间恢复）。任务 ID（T1、T2、...）来自 `task` 工具——只传递你本次会话中通过 `task` 工具调用获得的 `task_id`。如果 `task_id` 格式错误或未知，绑定将被丢弃：子代理的发现不会捕获到任何任务，工具结果会告诉你这一点。
+
+## 将子代理绑定到任务
+
+当你 `run` 或 `spawn` 一个为特定任务工作的子代理时，
+通过 `task_id` 传递任务的 TID（例如 `task_id: "T4"`）——但只能是 `task` 工具在本次会话中实际返回的 TID。子代理完成后，系统检查 `tasks/<task_id>/progress.md` 是否存在且包含所需结构——如果没有，子代理在终止前还有一次机会写入它。然后下一个检查点写入器读取该文件，并将逐字命令、结果和发现整合到主检查点中。
+
+如果 `task_id` 格式错误或指定的任务不存在，绑定将被丢弃——子代理的发现不会捕获到该任务，工具结果会说明这一点。对于不绑定到任务的临时工作，请将 `task_id` 留空；此时 postStop 检查将变为空操作。
+
+## 使用说明
+
+- **恢复同一子代理**：向 `run`/`spawn` 传递 `actor_id`，该调用将恢复该子代理的会话（继续其先前的消息和工具输出）。没有 `actor_id` 时，将创建全新的子代理。
+- **`run` 与 `spawn` 的结果交付**：`run` 阻塞并内联返回结果。`spawn` 立即返回 actor_id；后台 actor 完成时，其结果将作为通知出现在本次对话中——你的轮次不会自动唤醒来处理它；你将在下次回复用户时看到它。使用 `wait` 显式阻塞 actor_id。
+- **`wait` 对持久化对等体的注意事项**：`wait` 是为你通过 `run`/`spawn` 生成的临时子代理设计的。持久化对等体在轮次间空闲，且从不在成功时产生"完成"结果——对持久化对等体使用 `wait` 将阻塞直到该对等体失败或被取消。请使用 `send` + `status` 来与对等体协调。
+- **`send` 语义**：即发即弃；无论接收方负载如何，约 5 ms 内返回。接收方在其下次 runLoop 迭代开始时拾取消息。对于未知的 `to_actor_id`，`send` 返回 `{inboxID: null, error: "receiver not found"}` 而非抛出异常——请处理错误路径。
+- 通常信任子代理的输出，但子代理看不到你的完整上下文（除非你传递 `context="full"`）；相应地做好简报。
+
+
+## 示例
+
+<example>
+用户："找到 parser.ts 中处理错误恢复的所有位置"
+助手：我将生成一个 explore 子代理来扫描与解析器相关的文件。
+[actor({"operation":{"action":"run","subagent_type":"explore","description":"在解析器中查找错误恢复","prompt":"搜索 src/parser.ts 及相邻文件中的错误恢复模式。返回：每个位置的文件:行号 + 一行描述其如何恢复。如果找到 catch 块、panic 模式同步或恢复哨兵，全部列出。"}})]
+</example>
+
+<example>
+用户："验证类型检查器是否正确实现了 spec.md §3"
+助手：我将生成一个 general 子代理进行独立审查。
+[actor({"operation":{"action":"run","subagent_type":"general","description":"类型检查器规范审查","prompt":"读取 docs/spec.md §3（类型系统），然后读取 src/types.ts 和 tests/types.test.ts。报告：（1）任何未实现的 §3 要求；（2）任何未能覆盖 §3 要求的测试。不要修复任何内容——只报告发现。"}})]
+</example>
+
+<example>
+用户："调查 T4 在类型检查器中的失败测试"
+助手：T4 是我的跟踪器中的一个活动任务。我将生成一个绑定到 T4 的 explore 子代理，以便其发现最终进入 tasks/T4/progress.md，下一个检查点可以整合它们。
+[actor({"operation":{"action":"run","subagent_type":"explore","description":"调查 T4 类型检查器失败","prompt":"运行 `bun test src/types.test.ts` 并报告每个失败用例。对于每个失败：断言的文件:行号、预期值与实际值，以及基于读取 src/types.ts 的最可能根本原因假设。不要修复任何内容。","task_id":"T4"}})]
+</example>

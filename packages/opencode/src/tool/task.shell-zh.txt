@@ -1,0 +1,54 @@
+持久化工作项工具（shell 形式）。任务形成树形结构（T1、T2、...；子任务 T1.1、T1.2、...），生命周期为：
+open ⇄ in_progress，任一 → blocked → open，任一 → done | abandoned。
+
+# 脚本结构
+#   - 多行：每个非空行为一条命令，首次失败时 set-e 退出
+#   - "双引号"保留字面换行符，处理 \" \\ 转义
+#   - '单引号'为原样
+#   - # 开始行注释到行尾（引号内的 # 为字面文本）
+
+# create：
+    task create "Implement auth"
+    # 子任务：通过 --parent 传递父任务的 TID；子任务 ID 嵌套在父任务下（例如 T1.1）
+    task create "Email/password login" --parent T1
+
+# 多行摘要——heredoc 正文为原样（无需对 " \ $ # 进行转义）：
+    task create <<EOF
+    Implement auth
+    - email/password
+    - oauth (google, github)
+    - regex /\b[A-Z]+_TOKEN\b/ for env scan
+    EOF
+
+# 检查：
+    task list [<status>] [--include-terminal] [--include-archived]   # 默认：open+in_progress+blocked
+    task list open                     # 按状态过滤
+    task get T1
+
+# 状态机转换：
+    task start T1 [--reason "<note>"]  # 标记为 in_progress（正在处理）
+    task block T1 "waiting on spec"
+    task unblock T1 "spec resolved"
+    task done T1 "all tests pass"
+    task abandon T1 "out of scope"
+
+# 重命名：
+    task rename T1 "Updated title"
+
+# 每个动词都接受 --session <id> 来操作其他会话（默认：当前会话）。
+
+# 多命令（每行一条，首次失败时 set-e 退出）：
+    task create "Lexer"
+    task create "Parser"
+    task create "Type checker"
+
+`task list <status>` 的状态值：open | in_progress | blocked | done | abandoned
+
+# 已移除的动词（改用列出的等效项）：
+#   progress       — 进度由检查点写入器在会话级别的 progress.md 中维护；你不需要记录事件
+#   approve        — 提议状态已被移除；新任务以 'open' 状态开始
+#   revise         — 任务仅可重命名；长描述属于 §1 活动意图或 main progress.md 部分
+#   create_sub     — 使用带 parent_id 的 'create'
+
+# 不要在回复中重复任务树——UI 已经显示它了。
+# 只需总结你正在处理的内容或发生了什么变化。
