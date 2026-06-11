@@ -1,13 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "0.1.0",
-  "name": "@mimo-ai/cli",
+  "version": "1.0.0",
+  "name": "@cheerful-agent/mimo-plus",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
   },
-  "private": true,
+  "private": false,
   "scripts": {
     "prepare": "effect-language-service patch || true",
     "typecheck": "tsgo --noEmit",

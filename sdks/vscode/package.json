@@ -2,7 +2,7 @@
   "name": "opencode",
   "displayName": "opencode",
   "description": "opencode for VS Code",
-  "version": "1.14.19",
+  "version": "0.0.0-main-202606110634",
   "publisher": "sst-dev",
   "repository": {
     "type": "git",

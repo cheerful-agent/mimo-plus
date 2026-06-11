@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import fs from "fs"
 import { $ } from "bun"
 import pkg from "../package.json"
 import { Script } from "@mimo-ai/script"
@@ -29,10 +30,10 @@ for (const filepath of new Bun.Glob("*/package.json").scanSync({ cwd: "./dist" }
 console.log("binaries", binaries)
 const version = Object.values(binaries)[0]
 
-await $`mkdir -p ./dist/${pkg.name}`
-await $`cp -r ./bin ./dist/${pkg.name}/bin`
-await $`cp ./script/postinstall.mjs ./dist/${pkg.name}/postinstall.mjs`
-await Bun.file(`./dist/${pkg.name}/LICENSE`).write(await Bun.file("../../LICENSE").text())
+
+fs.mkdirSync(`./dist/${pkg.name}/bin`, { recursive: true }); fs.cpSync("./bin", `./dist/${pkg.name}/bin`, { recursive: true });
+fs.copyFileSync("./script/postinstall.mjs", `./dist/${pkg.name}/postinstall.mjs`);
+fs.copyFileSync("../../LICENSE", `./dist/${pkg.name}/LICENSE`);
 
 await Bun.file(`./dist/${pkg.name}/package.json`).write(
   JSON.stringify(
